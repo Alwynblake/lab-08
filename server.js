@@ -20,29 +20,94 @@ client.on('err', err => console.log(err));
 //Cors stuff
 app.use(cors());
 
-//location functions
-app.get('/location', (request, response) => {
-  searchToLatLong(request.query.data)
-    .then(location => response.send(location))
-    .catch(error => handleError(error, response));
-});
+//handle requests
+app.get('/location', getLocation);
 
-function searchToLatLong(query) {
-  const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${query}&key=${process.env.GEOCODE_API_KEY}`;
-
-  return superagent.get(url)
-    .then(res => {
-      return new Location(query, res);
-    })
-    .catch(error => handleError(error));
+    
+//handle errors
+function handleError(err, res) {
+  console.error(err);
+  if (res) res.status(500).send('Sorry - Something Broke');
 }
 
-function Location(query, res) {
-  this.latitude = res.body.results[0].geometry.location.lat;
-  this.longitude = res.body.results[0].geometry.location.lng;
-  this.formatted_query = res.body.results[0].formatted_address;
+// start the server
+app.listen(PORT, () => {
+  console.log(`listening on ${PORT}`);
+});
+
+//pull from cache or make request
+//location
+function getLocation(request, response){
+  const locationHandler = {
+    query: request.query.data,
+    cacheHit: (results) => {
+      console.log('Got data from SQL');
+      response.send(results.rows[0]);
+    },
+    cacheMiss: () => {
+      Location.fetchLocation(request.query.data)
+        .then(data=> response.send(data));
+    },
+  };
+  Location.lookupLocation(locationHandler);
+}
+//constructor
+function Location(query, data) {
   this.search_query = query;
+  this.formatted_query = data.formatted_address;
+  this.latitude = data.geometry.location.lat;
+  this.longitude = data.geometry.location.lng;
 };
+
+//save to database method
+Location.prototype.save = function() {
+  let SQL = `
+  INSERT INTO locations
+    (search_query,formatted_query,latitude,longitude)
+    VALUES($1,$2,$3,$4)
+    RETURNING id
+  `;
+  let values = Object.values(this);
+  return client.query(SQL,values);
+};
+
+
+//fetch the location from api save it to the db
+Location.fetchLocation = (query) => {
+  const _URL = `https://maps.googleapis.com/maps/api/geocode/json?address=${query}&key=${process.env.GEOCODE_API_KEY}`;
+  return superagent.get(_URL)
+    .then (data => {
+      console.log('Got data from API');
+      if (! data.body.results.length ) {throw 'No Data';}
+      else {
+        let location = new Location (query, data.body.results[0]);
+        return location.save()
+          .then( result => {
+            location.id = result.rows[0].id;
+            return location;
+          });
+        return location;
+      }
+    });
+};
+
+//lookup location from db fucntion
+Location.lookupLocation = (handler) => {
+  const SQL = `Select * FROM locations WHERE search_query=$1`;
+  const values = [handler.query];
+
+  return client.query(SQL, values )
+    .then(results => {
+      if (results.rowCount > 0) {
+        handler.cacheHit(results);
+      } else {
+        handler.cacheMiss();
+      }
+    }) 
+    .catch(console.error);
+};
+
+
 
 //Weather functions
 app.get('/weather', getWeather);
@@ -113,11 +178,3 @@ function getMovies(request, response) {
     .catch(error => handleError(error));
 }
 
-function handleError(err, res) {
-  console.error(err);
-  if (res) res.status(500).send('Sorry - Something Broke');
-}
-
-app.listen(PORT, () => {
-  console.log(`listening on ${PORT}`);
-});
