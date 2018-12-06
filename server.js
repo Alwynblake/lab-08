@@ -1,0 +1,180 @@
+'use strict';
+//app dependencies
+const express = require('express');
+const superagent = require('superagent');
+const cors = require('cors');
+const pg = require('pg');
+
+//dotenv - load enviormental variables
+require('dotenv').config();
+
+//app constants
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+//Set up Database
+const client = new pg.Client(process.env.DATABASE_URL);
+client.connect();
+client.on('err', err => console.log(err));
+
+//Cors stuff
+app.use(cors());
+
+//handle requests
+app.get('/location', getLocation);
+
+    
+//handle errors
+function handleError(err, res) {
+  console.error(err);
+  if (res) res.status(500).send('Sorry - Something Broke');
+}
+
+// start the server
+app.listen(PORT, () => {
+  console.log(`listening on ${PORT}`);
+});
+
+//pull from cache or make request
+//location
+function getLocation(request, response){
+  const locationHandler = {
+    query: request.query.data,
+    cacheHit: (results) => {
+      console.log('Got data from SQL');
+      response.send(results.rows[0]);
+    },
+    cacheMiss: () => {
+      Location.fetchLocation(request.query.data)
+        .then(data=> response.send(data));
+    },
+  };
+  Location.lookupLocation(locationHandler);
+}
+//constructor
+function Location(query, data) {
+  this.search_query = query;
+  this.formatted_query = data.formatted_address;
+  this.latitude = data.geometry.location.lat;
+  this.longitude = data.geometry.location.lng;
+};
+
+//save to database method
+Location.prototype.save = function() {
+  let SQL = `
+  INSERT INTO locations
+    (search_query,formatted_query,latitude,longitude)
+    VALUES($1,$2,$3,$4)
+    RETURNING id
+  `;
+  let values = Object.values(this);
+  return client.query(SQL,values);
+};
+
+
+//fetch the location from api save it to the db
+Location.fetchLocation = (query) => {
+  const _URL = `https://maps.googleapis.com/maps/api/geocode/json?address=${query}&key=${process.env.GEOCODE_API_KEY}`;
+  return superagent.get(_URL)
+    .then (data => {
+      console.log('Got data from API');
+      if (! data.body.results.length ) {throw 'No Data';}
+      else {
+        let location = new Location (query, data.body.results[0]);
+        return location.save()
+          .then( result => {
+            location.id = result.rows[0].id;
+            return location;
+          });
+        return location;
+      }
+    });
+};
+
+//lookup location from db fucntion
+Location.lookupLocation = (handler) => {
+  const SQL = `Select * FROM locations WHERE search_query=$1`;
+  const values = [handler.query];
+
+  return client.query(SQL, values )
+    .then(results => {
+      if (results.rowCount > 0) {
+        handler.cacheHit(results);
+      } else {
+        handler.cacheMiss();
+      }
+    }) 
+    .catch(console.error);
+};
+
+
+
+//Weather functions
+app.get('/weather', getWeather);
+
+function Weather(day) {
+  this.forecast = day.summary;
+  this.time = new Date(day.time * 1000).toDateString();
+};
+
+function getWeather(request, response) {
+  const url = `https://api.darksky.net/forecast/${process.env.WEATHER_API_KEY}/${request.query.data.latitude},${request.query.data.longitude}`;
+
+  superagent.get(url)
+    .then(result => {
+      const weatherSummaries = result.body.daily.data.map(day => {
+        return new Weather(day);
+      });
+      response.send(weatherSummaries);
+    })
+    .catch(error => handleError(error));
+};
+
+//Yelp functions
+app.get('/yelp', getYelp);
+function Yelp(data) {
+  this.name = data.name;
+  this.image_url = data.image_url;
+  this.price = data.price;
+  this.rating = data.rating;
+  this.url = data.url;
+}
+
+//Build helper function for yelp
+function getYelp(request, response) {
+  superagent.get(`https://api.yelp.com/v3/businesses/search?location=${request.query.data.search_query}/${request.query.data.latitude},${request.query.data.longitude}`)
+    .set('Authorization', `Bearer ${process.env.YELP_API_KEY}`)
+    .then(result => {
+      const yelpSummaries = result.body.businesses.map(data => {
+        return new Yelp(data);
+      });
+      response.send(yelpSummaries);
+    })
+    .catch(error => handleError(error));
+}
+
+
+//Movie Functions
+app.get('/movies', getMovies);
+function Movies(data){
+  this.title = data.title;
+  this.overview = data.overview;
+  this.average_votes = data.vote_average;
+  this.total_votes = data.vote_count;
+  this.image_url = 'https://image.tmdb.org/t/p/w370_and_h556_bestv2/' + data.poster_path;
+  this.popularity = data.popularity;
+  this.released_on = data.release_date;
+}
+
+function getMovies(request, response) {
+  const url = `https://api.themoviedb.org/3/search/movie?api_key=${process.env.TMDB_API_KEY}&query=${request.query.data.search_query}`
+  superagent.get(url)
+    .then(ourResult => {
+      const movieSummaries = ourResult.body.results.map(data => {
+        return new Movies(data);
+      });
+      response.send(movieSummaries);
+    })
+    .catch(error => handleError(error));
+}
+
