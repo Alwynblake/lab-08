@@ -37,7 +37,7 @@ CREATE TABLE movies
 (
     id SERIAL PRIMARY KEY,
     title VARCHAR(255),
-    overview VARCHAR(255),
+    overview CHAR(8000),
     average_votes VARCHAR(255),
     total_votes VARCHAR(255),
     image_url VARCHAR(255),

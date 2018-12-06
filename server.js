@@ -24,7 +24,7 @@ app.use(cors());
 app.get('/location', getLocation);
 app.get('/weather', getWeather);
 app.get('/yelp', getYelp);
-
+app.get('/movies', getMovies);
 //handle errors
 function handleError(err, res) {
   console.error(err);
@@ -178,10 +178,8 @@ function getYelp(request, response) {
       response.send(result.rows);
     },
     cacheMiss: function() {
-        console.log('request.query.data', request.query.data);
      Restaurant.fetch(request.query.data)
         .then(result => {
-            console.log('result in the cacheMiss', result);
             response.send(result);
         })
         .catch(console.error);
@@ -239,7 +237,22 @@ Restaurant.fetch = function(location) {
 
 
 //Movie Functions
-app.get('/movies', getMovies);
+function getMovies(request, response) {
+    const handler = {
+        location: request.query.data,
+        cacheHit: function(result) {
+            response.send(result.rows);
+
+        },
+        cacheMiss: function (){
+            Movies.fetch(request.query.data)
+                .then(result => response.send(result))
+                .catch(console.error);
+        }
+    };
+    Movies.lookup(handler);
+}
+
 function Movies(data) {
   this.title = data.title;
   this.overview = data.overview;
@@ -250,18 +263,37 @@ function Movies(data) {
   this.popularity = data.popularity;
   this.released_on = data.release_date;
 }
+Movies.prototype.save = function(id) {
+    const SQL = `INSERT INTO movies (title,overview,average_votes,total_votes,image_url,popularity,released_on,location_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8);`;
+    const values = Object.values(this);
+    values.push(id);
+    client.query(SQL, values);
+};
 
-function getMovies(request, response) {
-  const url = `https://api.themoviedb.org/3/search/movie?api_key=${
-    process.env.TMDB_API_KEY
-  }&query=${request.query.data.search_query}`;
-  superagent
-    .get(url)
-    .then(ourResult => {
-      const movieSummaries = ourResult.body.results.map(data => {
-        return new Movies(data);
-      });
-      response.send(movieSummaries);
+Movies.lookup = function(handler) {
+    const SQL = `Select * From movies WHERE location_id=$1`;
+    client.query(SQL, [handler.location.id])
+    .then(result => {
+        if (result.rowCount >0){
+            console.log('Got data from SQL');
+            handler.cacheHit(result);
+        } else {
+            console.log('Got data from API');
+            handler.cacheMiss();
+        }
     })
     .catch(error => handleError(error));
+};
+
+Movies.fetch = function(location) {
+    const url = `https://api.themoviedb.org/3/search/movie?api_key=${process.env.TMDB_API_KEY}&query=${location.search_query}`
+
+    return superagent.get(url).then(result => {
+        const movieSummaries = result.body.results.map(data=>{
+            const summary = new Movies(data);
+            summary.save(location.id);
+            return summary;
+        });
+        return movieSummaries;
+    })
 }
