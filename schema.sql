@@ -3,7 +3,8 @@ DROP TABLE IF EXISTS restaurants;
 DROP TABLE IF EXISTS movies;
 DROP TABLE IF EXISTS locations;
 
-CREATE TABLE locations (
+CREATE TABLE locations
+(
     id SERIAL PRIMARY KEY,
     search_query VARCHAR(255),
     formatted_query VARCHAR(255),
@@ -11,15 +12,17 @@ CREATE TABLE locations (
     longitude NUMERIC(9, 6)
 );
 
-CREATE TABLE weathers (
+CREATE TABLE weathers
+(
     id SERIAL PRIMARY KEY,
-    forecase VARCHAR(255),
+    forecast VARCHAR(255),
     time VARCHAR(255),
     location_id INTEGER NOT NULL,
     FOREIGN KEY (location_id) REFERENCES locations (id)
 );
 
-CREATE TABLE restaurants (
+CREATE TABLE restaurants
+(
     id SERIAL PRIMARY KEY,
     name VARCHAR(255),
     image_url VARCHAR(255),
@@ -30,7 +33,8 @@ CREATE TABLE restaurants (
     FOREIGN KEY (location_id) REFERENCES locations (id)
 );
 
-CREATE TABLE movies (
+CREATE TABLE movies
+(
     id SERIAL PRIMARY KEY,
     title VARCHAR(255),
     overview VARCHAR(255),
