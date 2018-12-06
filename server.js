@@ -1,13 +1,23 @@
 'use strict';
-
+//app dependencies
 const express = require('express');
 const superagent = require('superagent');
-const app = express();
 const cors = require('cors');
-const PORT = process.env.PORT || 3000;
+const pg = require('pg');
 
+//dotenv - load enviormental variables
 require('dotenv').config();
 
+//app constants
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+//Set up Database
+const client = new pg.Client(process.env.DATABASE_URL);
+client.connect();
+client.on('err', err => console.log(err));
+
+//Cors stuff
 app.use(cors());
 
 //location functions
