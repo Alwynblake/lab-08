@@ -23,6 +23,7 @@ app.use(cors());
 //handle requests
 app.get('/location', getLocation);
 app.get('/weather', getWeather);
+app.get('/yelp', getYelp);
 
 //handle errors
 function handleError(err, res) {
@@ -40,14 +41,15 @@ app.listen(PORT, () => {
 function getLocation(request, response) {
   const locationHandler = {
     query: request.query.data,
-    cacheHit: (results) => {
+    cacheHit: results => {
       console.log('Got data from SQL');
       response.send(results.rows[0]);
     },
     cacheMiss: () => {
-      Location.fetchLocation(request.query.data)
-        .then(data => response.send(data));
-    },
+      Location.fetchLocation(request.query.data).then(data =>
+        response.send(data)
+      );
+    }
   };
   Location.lookupLocation(locationHandler);
 }
@@ -57,10 +59,10 @@ function Location(query, data) {
   this.formatted_query = data.formatted_address;
   this.latitude = data.geometry.location.lat;
   this.longitude = data.geometry.location.lng;
-};
+}
 
 //save to database method
-Location.prototype.save = function () {
+Location.prototype.save = function() {
   let SQL = `
   INSERT INTO locations
     (search_query,formatted_query,latitude,longitude)
@@ -71,32 +73,33 @@ Location.prototype.save = function () {
   return client.query(SQL, values);
 };
 
-
 //fetch the location from api save it to the db
-Location.fetchLocation = (query) => {
-  const _URL = `https://maps.googleapis.com/maps/api/geocode/json?address=${query}&key=${process.env.GEOCODE_API_KEY}`;
-  return superagent.get(_URL)
-    .then(data => {
-      console.log('Got data from API');
-      if (!data.body.results.length) { throw 'No Data'; }
-      else {
-        let location = new Location(query, data.body.results[0]);
-        return location.save()
-          .then(result => {
-            location.id = result.rows[0].id;
-            return location;
-          });
+Location.fetchLocation = query => {
+  const _URL = `https://maps.googleapis.com/maps/api/geocode/json?address=${query}&key=${
+    process.env.GEOCODE_API_KEY
+  }`;
+  return superagent.get(_URL).then(data => {
+    console.log('Got data from API');
+    if (!data.body.results.length) {
+      throw 'No Data';
+    } else {
+      let location = new Location(query, data.body.results[0]);
+      return location.save().then(result => {
+        location.id = result.rows[0].id;
         return location;
-      }
-    });
+      });
+      return location;
+    }
+  });
 };
 
 //lookup location from db fucntion
-Location.lookupLocation = (handler) => {
+Location.lookupLocation = handler => {
   const SQL = `Select * FROM locations WHERE search_query=$1`;
   const values = [handler.query];
 
-  return client.query(SQL, values)
+  return client
+    .query(SQL, values)
     .then(results => {
       if (results.rowCount > 0) {
         handler.cacheHit(results);
@@ -107,21 +110,18 @@ Location.lookupLocation = (handler) => {
     .catch(console.error);
 };
 
-
-
 //Weather functions
 function getWeather(request, response) {
   const handler = {
     location: request.query.data,
-    cacheHit: function (result) {
+    cacheHit: function(result) {
       response.send(result.rows);
-
     },
-    cacheMiss: function () {
+    cacheMiss: function() {
       Weather.fetch(request.query.data)
-        .then(result => response.send(results))
+        .then(result => response.send(result))
         .catch(console.error);
-    },
+    }
   };
   Weather.lookup(handler);
 }
@@ -129,18 +129,19 @@ function getWeather(request, response) {
 function Weather(day) {
   this.forecast = day.summary;
   this.time = new Date(day.time * 1000).toDateString();
-};
+}
 
-Weather.prototype.save = function (id) {
+Weather.prototype.save = function(id) {
   const SQL = `INSERT INTO weathers (forecast, time, location_id) VALUES ($1, $2, $3);`;
   const values = Object.values(this);
   values.push(id);
   client.query(SQL, values);
 };
 
-Weather.lookup = function (handler) {
+Weather.lookup = function(handler) {
   const SQL = `SELECT * FROM weathers WHERE location_id=$1;`;
-  client.query(SQL, [handler.location.id])
+  client
+    .query(SQL, [handler.location.id])
     .then(result => {
       if (result.rowCount > 0) {
         console.log('Got data from SQL');
@@ -153,27 +154,40 @@ Weather.lookup = function (handler) {
     .catch(error => handleError(error));
 };
 
-Weather.fetch = function (location) {
-  const url = `https://api.darksky.net/forecast/${process.env.WEATHER_API_KEY}/${location.latitude},${location.longitude}`;
+Weather.fetch = function(location) {
+  const url = `https://api.darksky.net/forecast/${
+    process.env.WEATHER_API_KEY
+  }/${location.latitude},${location.longitude}`;
 
-  return superagent.get(url)
-    .then(result => {
-      const weatherSummaries = result.body.daily.data.map(day => {
-        const summary = new Weather(day);
-        summary.save(location.id);
-        return summary;
-      });
-      return weatherSummaries;
+  return superagent.get(url).then(result => {
+    const weatherSummaries = result.body.daily.data.map(day => {
+      const summary = new Weather(day);
+      summary.save(location.id);
+      return summary;
     });
+    return weatherSummaries;
+  });
 };
 
-
-
-
-
 //Yelp functions
-app.get('/yelp', getYelp);
-function Yelp(data) {
+//pull from cache or make requests
+function getYelp(request, response) {
+  const handler = {
+    location: request.query.data,
+    cacheHit: function(result) {
+      response.send(result.rows);
+    },
+    cacheMiss: function() {
+      Restaurant.fetch(request.query.data)
+        .then(result => response.send(result))
+        .catch(console.error);
+    },
+  };
+  Restaurant.lookup(handler);
+}
+
+//constructor function
+function Restaurant(data) {
   this.name = data.name;
   this.image_url = data.image_url;
   this.price = data.price;
@@ -181,18 +195,47 @@ function Yelp(data) {
   this.url = data.url;
 }
 
-//Build helper function for yelp
-function getYelp(request, response) {
-  superagent.get(`https://api.yelp.com/v3/businesses/search?location=${request.query.data.search_query}/${request.query.data.latitude},${request.query.data.longitude}`)
+//save db method
+Restaurant.prototype.save = function(id) {
+  const SQL = `INSERT INTO restaurants (name,image_url,price,rating,url,location_id) VALUES ($1, $2, $3, $4, $5, $6);`;
+  const values = Object.values(this);
+  values.push(id);
+  client.query(SQL, values);
+};
+//fetch api data and send to db
+Restaurant.lookup = function(handler) {
+  const SQL = `SELECT * FROM restaurants WHERE location_id=$1`;
+  client
+    .query(SQL, [handler.location.id])
+    .then(result => {
+      if (result.rowCount > 0) {
+        console.log('Got data from SQL');
+        handler.cacheHit(result);
+      } else {
+        console.log('Got data from API');
+        handler.cacheMiss();
+      }
+    })
+    .catch(error => handleError(error));
+};
+//look up restaurants
+Restaurant.fetch = function(location) {
+  superagent
+    .get(
+      `https://api.yelp.com/v3/businesses/search?location=${
+        location.search_query
+      }/${location.latitude},${location.longitude}`
+    )
     .set('Authorization', `Bearer ${process.env.YELP_API_KEY}`)
     .then(result => {
       const yelpSummaries = result.body.businesses.map(data => {
-        return new Yelp(data);
+        const summary = new Restaurant(data);
+        summary.save(location.id);
+        return summary;
       });
-      response.send(yelpSummaries);
-    })
-    .catch(error => handleError(error));
-}
+      return yelpSummaries;
+    });
+};
 
 
 //Movie Functions
@@ -202,14 +245,18 @@ function Movies(data) {
   this.overview = data.overview;
   this.average_votes = data.vote_average;
   this.total_votes = data.vote_count;
-  this.image_url = 'https://image.tmdb.org/t/p/w370_and_h556_bestv2/' + data.poster_path;
+  this.image_url =
+    'https://image.tmdb.org/t/p/w370_and_h556_bestv2/' + data.poster_path;
   this.popularity = data.popularity;
   this.released_on = data.release_date;
 }
 
 function getMovies(request, response) {
-  const url = `https://api.themoviedb.org/3/search/movie?api_key=${process.env.TMDB_API_KEY}&query=${request.query.data.search_query}`
-  superagent.get(url)
+  const url = `https://api.themoviedb.org/3/search/movie?api_key=${
+    process.env.TMDB_API_KEY
+  }&query=${request.query.data.search_query}`;
+  superagent
+    .get(url)
     .then(ourResult => {
       const movieSummaries = ourResult.body.results.map(data => {
         return new Movies(data);
@@ -218,4 +265,3 @@ function getMovies(request, response) {
     })
     .catch(error => handleError(error));
 }
-
