@@ -178,8 +178,12 @@ function getYelp(request, response) {
       response.send(result.rows);
     },
     cacheMiss: function() {
-      Restaurant.fetch(request.query.data)
-        .then(result => response.send(result))
+        console.log('request.query.data', request.query.data);
+     Restaurant.fetch(request.query.data)
+        .then(result => {
+            console.log('result in the cacheMiss', result);
+            response.send(result);
+        })
         .catch(console.error);
     },
   };
@@ -220,12 +224,8 @@ Restaurant.lookup = function(handler) {
 };
 //look up restaurants
 Restaurant.fetch = function(location) {
-  superagent
-    .get(
-      `https://api.yelp.com/v3/businesses/search?location=${
-        location.search_query
-      }/${location.latitude},${location.longitude}`
-    )
+  return superagent.get(
+    `https://api.yelp.com/v3/businesses/search?location=${location.search_query}/${location.latitude},${location.longitude}`)
     .set('Authorization', `Bearer ${process.env.YELP_API_KEY}`)
     .then(result => {
       const yelpSummaries = result.body.businesses.map(data => {
@@ -233,7 +233,7 @@ Restaurant.fetch = function(location) {
         summary.save(location.id);
         return summary;
       });
-      return yelpSummaries;
+      return yelpSummaries;    
     });
 };
 
